@@ -1,0 +1,29 @@
+version: "3.8"
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: sandboxdb
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  api:
+    build: .
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:password@db:5432/sandboxdb
+      SANDBOX_API_KEY: "change_this_api_key"
+      SANDBOX_HMAC_SECRET: "change_this_hmac_secret"
+      REQUIRE_HMAC: "false"
+      SANDBOX_DEFAULT_TRILLION_BALANCE_USD: "100000000000000"
+    ports:
+      - "8080:8080"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+
+volumes:
+  db_data:
