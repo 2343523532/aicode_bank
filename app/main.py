@@ -34,8 +34,8 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import BigInteger, Column
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import BigInteger, Column, func
+from sqlalchemy.types import JSON
 from sqlalchemy.ext.asyncio import AsyncSession as SAAsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import Field, SQLModel, select
@@ -83,7 +83,7 @@ class Customer(SQLModel, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
     name: Optional[str] = Field(default=None)
     email: Optional[str] = Field(default=None)
-    metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
+    metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: int = Field(default_factory=lambda: int(__import__("time").time()))
 
 
@@ -91,14 +91,14 @@ class Ledger(SQLModel, table=True):
     account_id: str = Field(primary_key=True)
     currency: str = Field(default="USD")
     balance_cents: int = Field(default=0, sa_column=Column(BigInteger))
-    events: List[Dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSONB))
+    events: List[Dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON))
 
 
 class Token(SQLModel, table=True):
     id: str = Field(primary_key=True)
     card_last4: Optional[str] = Field(default=None)
     created_at: int = Field(default_factory=lambda: int(__import__("time").time()))
-    metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
+    metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
 
 
 class Charge(SQLModel, table=True):
@@ -108,13 +108,23 @@ class Charge(SQLModel, table=True):
     currency: str = Field(default="USD")
     status: str = Field(default="succeeded")
     idempotency_key: Optional[str] = Field(default=None, index=True)
-    metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
+    metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: int = Field(default_factory=lambda: int(__import__("time").time()))
+
+
+class Refund(SQLModel, table=True):
+    id: str = Field(primary_key=True)
+    charge_id: str = Field(index=True)
+    amount_cents: int = Field(sa_column=Column(BigInteger))
+    currency: str = Field(default="USD")
+    status: str = Field(default="succeeded")
+    metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: int = Field(default_factory=lambda: int(__import__("time").time()))
 
 
 class IdempotencyKey(SQLModel, table=True):
     key: str = Field(primary_key=True)
-    response_payload: Dict[str, Any] = Field(sa_column=Column(JSONB))
+    response_payload: Dict[str, Any] = Field(sa_column=Column(JSON))
     created_at: int = Field(default_factory=lambda: int(__import__("time").time()))
 
 
@@ -164,7 +174,31 @@ class ChargeResponse(BaseModel):
     currency: str
     customer_id: str
     status: str
+    refunded_cents: int = 0
     test_only: bool = True
+
+
+class ChargesListResponse(BaseModel):
+    customer_id: str
+    charges: List[ChargeResponse]
+    count: int
+    test_only: bool = True
+
+
+class RefundCreate(BaseModel):
+    amount_cents: Optional[int] = None
+    reason: Optional[str] = None
+
+
+class RefundResponse(BaseModel):
+    id: str
+    object: str = "refund"
+    charge_id: str
+    amount_cents: int
+    currency: str
+    status: str
+    test_only: bool = True
+    reason: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +244,17 @@ def cents_to_str(cents: int, currency: str = "USD") -> str:
 def make_id(prefix: str) -> str:
     """Create unique identifiers with predictable prefixes."""
     return f"{prefix}_{uuid.uuid4().hex[:24]}"
+
+
+async def total_refunded_cents(session: AsyncSession, charge_id: str) -> int:
+    """Return the total amount refunded for a charge in cents."""
+
+    query = select(func.coalesce(func.sum(Refund.amount_cents), 0)).where(
+        Refund.charge_id == charge_id
+    )
+    result = await session.exec(query)
+    value = result.one()
+    return int(value[0] if isinstance(value, (tuple, list)) else value)
 
 
 # ---------------------------------------------------------------------------
@@ -445,6 +490,7 @@ async def create_charge(
         "currency": charge.currency,
         "customer_id": charge.customer_id,
         "status": charge.status,
+        "refunded_cents": 0,
         "test_only": True,
     }
 
@@ -472,6 +518,39 @@ async def create_charge(
     return ChargeResponse(**response_payload)
 
 
+@app.get("/v1/customers/{customer_id}/charges", response_model=ChargesListResponse)
+async def list_charges(
+    customer_id: str,
+    request: Request,
+    x_test_mode: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+    x_signature: Optional[str] = Header(None),
+    session: AsyncSession = Depends(get_session),
+) -> ChargesListResponse:
+    await verify_request_safety(request, x_test_mode, x_api_key, x_signature)
+
+    result = await session.exec(
+        select(Charge).where(Charge.customer_id == customer_id).order_by(Charge.created_at.desc())
+    )
+    charges = result.all()
+
+    responses: List[ChargeResponse] = []
+    for charge in charges:
+        refunded = await total_refunded_cents(session, charge.id)
+        responses.append(
+            ChargeResponse(
+                id=charge.id,
+                amount_cents=charge.amount_cents,
+                currency=charge.currency,
+                customer_id=charge.customer_id,
+                status=charge.status,
+                refunded_cents=refunded,
+            )
+        )
+
+    return ChargesListResponse(customer_id=customer_id, charges=responses, count=len(responses))
+
+
 @app.get("/v1/accounts/{account_id}/events")
 async def account_events(
     account_id: str,
@@ -488,6 +567,110 @@ async def account_events(
         raise HTTPException(status_code=404, detail="account not found (sandbox)")
 
     return {"test_only": True, "account_id": account_id, "events": ledger.events}
+
+
+@app.post("/v1/charges/{charge_id}/refunds", response_model=RefundResponse)
+async def create_refund(
+    charge_id: str,
+    payload: RefundCreate,
+    request: Request,
+    background: BackgroundTasks,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    x_test_mode: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
+    x_signature: Optional[str] = Header(None),
+    session: AsyncSession = Depends(get_session),
+) -> RefundResponse:
+    await verify_request_safety(request, x_test_mode, x_api_key, x_signature)
+
+    charge = await session.get(Charge, charge_id)
+    if not charge:
+        raise HTTPException(status_code=404, detail="charge not found (sandbox)")
+
+    ledger = await session.get(Ledger, charge.customer_id)
+    if not ledger:
+        raise HTTPException(status_code=404, detail="customer ledger not found (sandbox)")
+
+    if idempotency_key:
+        stored = await session.get(IdempotencyKey, idempotency_key)
+        if stored:
+            return RefundResponse(**stored.response_payload)
+
+    already_refunded = await total_refunded_cents(session, charge_id)
+    remaining = charge.amount_cents - already_refunded
+    if remaining <= 0:
+        raise HTTPException(status_code=400, detail="charge already fully refunded")
+
+    refund_amount = payload.amount_cents or remaining
+    if refund_amount <= 0 or refund_amount > remaining:
+        raise HTTPException(status_code=400, detail="invalid refund amount")
+
+    refund_id = make_id("re_test")
+    metadata = {"reason": payload.reason} if payload.reason else {}
+    refund = Refund(
+        id=refund_id,
+        charge_id=charge_id,
+        amount_cents=refund_amount,
+        currency=charge.currency,
+        metadata=metadata,
+    )
+    session.add(refund)
+
+    ledger.balance_cents += refund_amount
+    ledger.events.append(
+        {
+            "type": "refund",
+            "id": refund_id,
+            "charge_id": charge_id,
+            "amount_cents": refund_amount,
+            "note": payload.reason,
+        }
+    )
+
+    total_after_refund = already_refunded + refund_amount
+    if total_after_refund >= charge.amount_cents:
+        charge.status = "refunded"
+    elif total_after_refund > 0:
+        charge.status = "partially_refunded"
+
+    response_payload = RefundResponse(
+        id=refund.id,
+        charge_id=refund.charge_id,
+        amount_cents=refund.amount_cents,
+        currency=refund.currency,
+        status=refund.status,
+        reason=payload.reason,
+    )
+
+    if idempotency_key:
+        idempotency = IdempotencyKey(key=idempotency_key, response_payload=response_payload.dict())
+        session.add(idempotency)
+
+    await session.commit()
+    await session.refresh(refund)
+
+    customer = await session.get(Customer, charge.customer_id)
+    webhook_url = customer.metadata.get("webhook_url") if customer and customer.metadata else None
+    if webhook_url:
+        charge_payload = ChargeResponse(
+            id=charge.id,
+            amount_cents=charge.amount_cents,
+            currency=charge.currency,
+            customer_id=charge.customer_id,
+            status=charge.status,
+            refunded_cents=total_after_refund,
+        ).dict()
+        background.add_task(
+            deliver_webhook_with_retries,
+            webhook_url,
+            {
+                "type": "charge.refunded",
+                "data": {"refund": response_payload.dict(), "charge": charge_payload},
+            },
+            secret="webhook_secret_dummy",
+        )
+
+    return response_payload
 
 
 # ---------------------------------------------------------------------------

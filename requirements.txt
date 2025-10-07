@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+sqlmodel
+asyncpg
+httpx
+pydantic
+aiosqlite
+pytest
+pytest-asyncio
+asgi-lifespan
