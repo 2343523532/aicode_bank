@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import (
     BackgroundTasks,
+    Body,
     Depends,
     FastAPI,
     Header,
@@ -34,9 +35,10 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import BigInteger, Column, func
+from sqlalchemy import BigInteger, Column, MetaData, func
+from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.types import JSON
-from sqlalchemy.ext.asyncio import AsyncSession as SAAsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import Field, SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -72,57 +74,81 @@ WEBHOOK_RETRY_MAX = int(os.environ.get("WEBHOOK_RETRY_MAX", "6"))
 # ---------------------------------------------------------------------------
 async_engine = create_async_engine(DATABASE_URL, echo=False, future=True)
 AsyncSessionLocal = sessionmaker(
-    async_engine, expire_on_commit=False, class_=SAAsyncSession
+    async_engine, expire_on_commit=False, class_=AsyncSession
 )
 
 
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
+# Reset metadata to avoid conflicts when this module is reloaded in tests.
+SQLModel.metadata = MetaData()
+
+
 class Customer(SQLModel, table=True):
+    __table_args__ = {"extend_existing": True}
     id: Optional[str] = Field(default=None, primary_key=True)
     name: Optional[str] = Field(default=None)
     email: Optional[str] = Field(default=None)
-    metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    metadata_json: Dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column("metadata", MutableDict.as_mutable(JSON)),
+    )
     created_at: int = Field(default_factory=lambda: int(__import__("time").time()))
 
 
 class Ledger(SQLModel, table=True):
+    __table_args__ = {"extend_existing": True}
     account_id: str = Field(primary_key=True)
     currency: str = Field(default="USD")
     balance_cents: int = Field(default=0, sa_column=Column(BigInteger))
-    events: List[Dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON))
+    events: List[Dict[str, Any]] = Field(
+        default_factory=list, sa_column=Column(MutableList.as_mutable(JSON))
+    )
 
 
 class Token(SQLModel, table=True):
+    __table_args__ = {"extend_existing": True}
     id: str = Field(primary_key=True)
     card_last4: Optional[str] = Field(default=None)
     created_at: int = Field(default_factory=lambda: int(__import__("time").time()))
-    metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    metadata_json: Dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column("metadata", MutableDict.as_mutable(JSON)),
+    )
 
 
 class Charge(SQLModel, table=True):
+    __table_args__ = {"extend_existing": True}
     id: str = Field(primary_key=True)
     customer_id: str = Field(index=True)
     amount_cents: int = Field(sa_column=Column(BigInteger))
     currency: str = Field(default="USD")
     status: str = Field(default="succeeded")
     idempotency_key: Optional[str] = Field(default=None, index=True)
-    metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    metadata_json: Dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column("metadata", MutableDict.as_mutable(JSON)),
+    )
     created_at: int = Field(default_factory=lambda: int(__import__("time").time()))
 
 
 class Refund(SQLModel, table=True):
+    __table_args__ = {"extend_existing": True}
     id: str = Field(primary_key=True)
     charge_id: str = Field(index=True)
     amount_cents: int = Field(sa_column=Column(BigInteger))
     currency: str = Field(default="USD")
     status: str = Field(default="succeeded")
-    metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    metadata_json: Dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column("metadata", MutableDict.as_mutable(JSON)),
+    )
     created_at: int = Field(default_factory=lambda: int(__import__("time").time()))
 
 
 class IdempotencyKey(SQLModel, table=True):
+    __table_args__ = {"extend_existing": True}
     key: str = Field(primary_key=True)
     response_payload: Dict[str, Any] = Field(sa_column=Column(JSON))
     created_at: int = Field(default_factory=lambda: int(__import__("time").time()))
@@ -313,8 +339,8 @@ async def on_startup() -> None:
         await conn.run_sync(SQLModel.metadata.create_all)
 
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Customer))
-        first = result.first()
+        first = await session.exec(select(Customer))
+        first = first.first()
         if not first:
             demo_id = make_id("cus_test")
             demo = Customer(id=demo_id, name="Demo Customer", email="dev@example.com")
@@ -469,7 +495,7 @@ async def create_charge(
         currency=payload.currency or "USD",
         status="succeeded",
         idempotency_key=idempotency_key,
-        metadata={"description": payload.description} if payload.description else {},
+        metadata_json={"description": payload.description} if payload.description else {},
     )
     session.add(charge)
 
@@ -506,7 +532,11 @@ async def create_charge(
             await session.refresh(charge)
 
     customer = await session.get(Customer, payload.customer_id)
-    webhook_url = customer.metadata.get("webhook_url") if customer and customer.metadata else None
+    webhook_url = (
+        customer.metadata_json.get("webhook_url")
+        if customer and customer.metadata_json
+        else None
+    )
     if webhook_url:
         background.add_task(
             deliver_webhook_with_retries,
@@ -572,9 +602,9 @@ async def account_events(
 @app.post("/v1/charges/{charge_id}/refunds", response_model=RefundResponse)
 async def create_refund(
     charge_id: str,
-    payload: RefundCreate,
     request: Request,
     background: BackgroundTasks,
+    payload: RefundCreate = Body(default_factory=RefundCreate),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     x_test_mode: Optional[str] = Header(None),
     x_api_key: Optional[str] = Header(None),
@@ -606,13 +636,13 @@ async def create_refund(
         raise HTTPException(status_code=400, detail="invalid refund amount")
 
     refund_id = make_id("re_test")
-    metadata = {"reason": payload.reason} if payload.reason else {}
+    metadata_payload = {"reason": payload.reason} if payload.reason else {}
     refund = Refund(
         id=refund_id,
         charge_id=charge_id,
         amount_cents=refund_amount,
         currency=charge.currency,
-        metadata=metadata,
+        metadata_json=metadata_payload,
     )
     session.add(refund)
 
@@ -650,7 +680,11 @@ async def create_refund(
     await session.refresh(refund)
 
     customer = await session.get(Customer, charge.customer_id)
-    webhook_url = customer.metadata.get("webhook_url") if customer and customer.metadata else None
+    webhook_url = (
+        customer.metadata_json.get("webhook_url")
+        if customer and customer.metadata_json
+        else None
+    )
     if webhook_url:
         charge_payload = ChargeResponse(
             id=charge.id,
