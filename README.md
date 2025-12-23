@@ -8,6 +8,8 @@ A fully asynchronous FastAPI application that emulates a Stripe-style sandbox fo
 - Persistent ledger that records every transaction event, including refunds.
 - Idempotency key storage to guarantee repeatable responses.
 - Optional webhook delivery with exponential backoff and HMAC signatures.
+- **Webhook Security**: Webhook signatures now include a timestamp to prevent replay attacks (`X-Signature-Timestamp`).
+- **Pagination**: Charge listing endpoints now support `limit` and `offset` query parameters.
 - New refund workflow with partial and full refunds plus charge summaries.
 - SQLite-compatible JSON columns, making local testing fast and dependency-free.
 - Automated regression test that exercises the full charge/refund lifecycle.
@@ -45,7 +47,7 @@ pip install -r requirements.txt
 | `POST` | `/v1/customers` | Register a customer and provision a seeded ledger. |
 | `GET` | `/v1/accounts/{account_id}/balance` | Retrieve ledger balance details. |
 | `POST` | `/v1/charges` | Create a charge and reduce the customer's balance. |
-| `GET` | `/v1/customers/{customer_id}/charges` | List recent charges with refund totals. |
+| `GET` | `/v1/customers/{customer_id}/charges` | List recent charges with refund totals. Supports `?limit=10&offset=0`. |
 | `POST` | `/v1/charges/{charge_id}/refunds` | Issue partial or full refunds with idempotency support. |
 | `GET` | `/v1/accounts/{account_id}/events` | Inspect chronological ledger events. |
 | `GET` | `/health` | Lightweight liveness probe. |
@@ -54,22 +56,18 @@ Each response contains `"test_only": true` to emphasise that no real funds move.
 
 ## Testing
 
-Run the asynchronous pytest suite, which provisions an isolated SQLite database and validates the end-to-end payment flow:
+Run the asynchronous pytest suite:
 
 ```bash
 pytest
 ```
 
-The test covers customer creation, charging, partial refunds, full refunds, ledger balance recovery, and audit events.
-
 ## Deployment notes
 
-- The included Dockerfile (named `code`) installs dependencies via `requirements.txt` and exposes the app on port `8080`.
-- For PostgreSQL deployments, set `DATABASE_URL` accordingly; JSON columns automatically adapt to portable SQLAlchemy types.
-- Configure webhook endpoints by storing a `webhook_url` value in customer metadata to receive `charge.succeeded` and `charge.refunded` notifications.
+- The included `Dockerfile` installs dependencies via `requirements.txt` and exposes the app on port `8080`.
+- For PostgreSQL deployments, set `DATABASE_URL` accordingly.
+- Use `docker-compose up` to start the API and a PostgreSQL database.
 
 ## Next steps
 
-- Extend the webhook payloads with signature timestamps for replay protection.
-- Add pagination and filtering to the charge listing endpoint.
 - Introduce API key management endpoints to rotate sandbox credentials programmatically.
