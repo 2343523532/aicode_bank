@@ -18,10 +18,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import SQLModel, select
 
-from app.database import async_engine, AsyncSessionLocal
+from app import database
 from app.models import Customer, Ledger
 from app.utils import make_id, money_to_cents, cents_to_str
-from app.config import DEFAULT_TRILLION_BALANCE_USD
+from app.config import DEFAULT_TRILLION_BALANCE_USD, SANDBOX_API_KEY as CONFIG_SANDBOX_API_KEY
 from app.routers import v1
 
 # ---------------------------------------------------------------------------
@@ -52,6 +52,11 @@ app.add_middleware(
 
 app.include_router(v1.router)
 
+# Keep compatibility for test modules that access main.async_engine directly.
+async_engine = database.get_async_engine()
+# Compatibility export for existing tests and integrations.
+SANDBOX_API_KEY = CONFIG_SANDBOX_API_KEY
+
 
 # ---------------------------------------------------------------------------
 # Startup: create tables and seed demo customer
@@ -59,10 +64,11 @@ app.include_router(v1.router)
 @app.on_event("startup")
 async def on_startup() -> None:
     logger.info("Creating DB tables (if not exist)...")
-    async with async_engine.begin() as conn:
+    async with database.get_async_engine().begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
 
-    async with AsyncSessionLocal() as session:
+    database.refresh_engine_if_needed()
+    async with database.AsyncSessionLocal() as session:
         first = await session.exec(select(Customer))
         first = first.first()
         if not first:
