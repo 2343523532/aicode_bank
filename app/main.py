@@ -22,7 +22,7 @@ from app import database
 from app.models import Customer, Ledger
 from app.utils import make_id, money_to_cents, cents_to_str
 from app.config import DEFAULT_TRILLION_BALANCE_USD, SANDBOX_API_KEY as CONFIG_SANDBOX_API_KEY
-from app.routers import v1
+from app.routers import matrix, v1
 
 # ---------------------------------------------------------------------------
 # Logging configuration
@@ -51,6 +51,7 @@ app.add_middleware(
 )
 
 app.include_router(v1.router)
+app.include_router(matrix.router)
 
 # Keep compatibility for test modules that access main.async_engine directly.
 async_engine = database.get_async_engine()
