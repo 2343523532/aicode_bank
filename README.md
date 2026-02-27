@@ -51,6 +51,7 @@ pip install -r requirements.txt
 | `POST` | `/v1/charges/{charge_id}/refunds` | Issue partial or full refunds with idempotency support. |
 | `GET` | `/v1/accounts/{account_id}/events` | Inspect chronological ledger events. |
 | `GET` | `/health` | Lightweight liveness probe. |
+| `GET` | `/matrix/api/config/lisp` | Return DAN Omni Common Lisp infrastructure configuration. |
 
 Each response contains `"test_only": true` to emphasise that no real funds move.
 

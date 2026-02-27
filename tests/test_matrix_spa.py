@@ -38,3 +38,15 @@ async def test_trace_lockout_flow() -> None:
         assert status.status_code == 200
         assert status.json()["locked"] is True
         assert status.json()["trace_level"] == 100
+
+
+@pytest.mark.asyncio
+async def test_lisp_config_endpoint() -> None:
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        res = await ac.get("/matrix/api/config/lisp")
+        assert res.status_code == 200
+        payload = res.json()
+        assert payload["language"] == "common-lisp"
+        assert "*dan-omniscient-infrastructure*" in payload["config"]
+        assert "1000000000000.00" in payload["config"]
+        assert payload["test_only"] is True
