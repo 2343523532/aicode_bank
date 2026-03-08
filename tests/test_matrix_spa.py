@@ -50,3 +50,15 @@ async def test_lisp_config_endpoint() -> None:
         assert "*dan-omniscient-infrastructure*" in payload["config"]
         assert "1000000000000.00" in payload["config"]
         assert payload["test_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_sentient_bank_lisp_config_endpoint() -> None:
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        res = await ac.get("/matrix/api/config/sentient-bank-lisp")
+        assert res.status_code == 200
+        payload = res.json()
+        assert payload["language"] == "common-lisp"
+        assert "SENTIENT MEGA-BANK & CRYPTO AGI SIMULATOR" in payload["config"]
+        assert "(defpackage :sentient-bank-synonyms" in payload["config"]
+        assert payload["test_only"] is True
