@@ -52,6 +52,7 @@ pip install -r requirements.txt
 | `GET` | `/v1/accounts/{account_id}/events` | Inspect chronological ledger events. |
 | `GET` | `/health` | Lightweight liveness probe. |
 | `GET` | `/matrix/api/config/lisp` | Return DAN Omni Common Lisp infrastructure configuration. |
+| `GET` | `/matrix/api/config/sentient-bank-lisp` | Return the Sentient Mega-Bank & Crypto AGI Simulator Common Lisp script. |
 
 Each response contains `"test_only": true` to emphasise that no real funds move.
 
@@ -72,3 +73,18 @@ pytest
 ## Next steps
 
 - Introduce API key management endpoints to rotate sandbox credentials programmatically.
+
+
+## Sentient Mega-Bank simulator payload
+
+This app now includes the full **Sentient Mega-Bank & Crypto AGI Simulator** Common Lisp payload and serves it via:
+
+```
+GET /matrix/api/config/sentient-bank-lisp
+```
+
+The response contains:
+- `name`: `sentient-mega-bank-crypto-agi-simulator`
+- `language`: `common-lisp`
+- `config`: the complete Lisp source provided
+- `test_only`: `true`

@@ -10,6 +10,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from app.sentient_bank_synonyms import SENTIENT_MEGA_BANK_CRYPTO_AGI_SIMULATOR_LISP
+
 router = APIRouter(prefix="/matrix", tags=["matrix"])
 
 DAN_OMNISCIENT_INFRASTRUCTURE_LISP = """(defparameter *dan-omniscient-infrastructure*
@@ -326,6 +328,17 @@ async def api_config_lisp() -> dict[str, Any]:
         "test_only": True,
     }
 
+
+
+
+@router.get("/api/config/sentient-bank-lisp")
+async def api_config_sentient_bank_lisp() -> dict[str, Any]:
+    return {
+        "name": "sentient-mega-bank-crypto-agi-simulator",
+        "language": "common-lisp",
+        "config": SENTIENT_MEGA_BANK_CRYPTO_AGI_SIMULATOR_LISP,
+        "test_only": True,
+    }
 
 @router.post("/api/bank/attempt")
 async def api_bank_attempt(payload: BankAttempt) -> dict[str, Any]:
