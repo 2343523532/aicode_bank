@@ -98,6 +98,58 @@ SENTIENT_MEGA_BANK_CRYPTO_AGI_SIMULATOR_LISP = r''';;;; ========================
               (format t "[TRANSFER FAILED] Insufficient ~A in ~A~%" currency from-id)))
         (format t "[ERROR] Account not found~%"))))
 
+
+(defun total-network-balance (currency)
+  (reduce #'+ *accounts*
+          :key (lambda (acct)
+                 (case currency
+                   (:usd (account-usd acct))
+                   (:btc (account-btc acct))
+                   (:eth (account-eth acct))
+                   (otherwise 0)))))
+
+(defun account->plist (acct)
+  (list :id (account-id acct)
+        :name (account-name acct)
+        :usd (account-usd acct)
+        :btc (account-btc acct)
+        :eth (account-eth acct)
+        :cards (reverse (account-cards acct))))
+
+(defun liquidity-snapshot ()
+  (let ((snapshot (list :usd (total-network-balance :usd)
+                        :btc (total-network-balance :btc)
+                        :eth (total-network-balance :eth))))
+    (format t "~%[LIQUIDITY SNAPSHOT] USD=~A BTC=~A ETH=~A"
+            (getf snapshot :usd) (getf snapshot :btc) (getf snapshot :eth))
+    snapshot))
+
+(defun transfer-batch (instructions)
+  (dolist (instruction instructions)
+    (destructuring-bind (from-id to-id currency amount) instruction
+      (transfer-funds from-id to-id currency amount))))
+
+(defun risk-score (acct)
+  (let* ((usd (account-usd acct))
+         (btc-usd (* (account-btc acct) 60000))
+         (eth-usd (* (account-eth acct) 3000))
+         (total (+ usd btc-usd eth-usd))
+         (crypto-ratio (/ (+ btc-usd eth-usd) (max total 1.0))))
+    (cond
+      ((< crypto-ratio 0.15) :low)
+      ((< crypto-ratio 0.5) :medium)
+      (t :high))))
+
+(defun rebalance-crypto-to-usd (acct &key (btc-portion 0.05) (eth-portion 0.05))
+  (let ((btc-sell (* (account-btc acct) btc-portion))
+        (eth-sell (* (account-eth acct) eth-portion)))
+    (decf (account-btc acct) btc-sell)
+    (decf (account-eth acct) eth-sell)
+    ;; Naive conversion for simulation only.
+    (incf (account-usd acct) (+ (* btc-sell 60000) (* eth-sell 3000)))
+    (format t "~%[REBALANCE] ~A sold BTC=~A ETH=~A into USD" (account-id acct) btc-sell eth-sell)
+    (account->plist acct)))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; 5. REPORTING
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -190,6 +242,7 @@ SENTIENT_MEGA_BANK_CRYPTO_AGI_SIMULATOR_LISP = r''';;;; ========================
   (digital-consciousness)
   (synthetic-sentience)
   (machine-awareness)
+  (liquidity-snapshot)
   (agi-report))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

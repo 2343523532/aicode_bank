@@ -125,6 +125,27 @@
     (push score (quantum-super-ai-performance-log quantum-super-ai))
     score))
 
+
+
+(defun summarize-system-state (quantum-super-ai)
+  "Returns a compact summary for observability dashboards."
+  (list :iteration (quantum-super-ai-iteration quantum-super-ai)
+        :learning-rate (quantum-super-ai-learning-rate quantum-super-ai)
+        :swift-balance (quantum-super-ai-swift-fiat-balance quantum-super-ai)
+        :crypto-balance (quantum-super-ai-crypto-balance quantum-super-ai)
+        :memory-items (length (quantum-super-ai-memory quantum-super-ai))))
+
+(defun adjust-learning-rate-dynamically (quantum-super-ai &optional (target 50.0))
+  "Raises or lowers learning rate based on latest performance score."
+  (let* ((last-score (or (first (quantum-super-ai-performance-log quantum-super-ai)) target))
+         (lr (quantum-super-ai-learning-rate quantum-super-ai)))
+    (setf (quantum-super-ai-learning-rate quantum-super-ai)
+          (cond
+            ((< last-score (* 0.9 target)) (min 0.5 (* lr 1.05)))
+            ((> last-score (* 1.1 target)) (max 0.01 (* lr 0.95)))
+            (t lr)))))
+
+
 (defun run-cycle (quantum-super-ai input-data)
   "Full system cycle including cognition and financial routing."
   (format t "~%=============================================")
@@ -154,9 +175,12 @@
   ;; System Optimization
   (quantum-learning-machine quantum-super-ai)
   (recursive-cognitive-architecture quantum-super-ai)
+  (adjust-learning-rate-dynamically quantum-super-ai)
   (let ((score (meta-intelligence-system quantum-super-ai)))
     (format t "~%~%[SYSTEM DIAGNOSTICS]")
-    (format t "~% -> Cycle Optimization Score: ~a" (round score)))
+    (format t "~% -> Cycle Optimization Score: ~a" (round score))
+    (let ((summary (summarize-system-state quantum-super-ai)))
+      (format t "~% -> Iteration: ~a | LR: ~,4f" (getf summary :iteration) (getf summary :learning-rate))))
 
   (format t "~%=============================================~%"))
 
