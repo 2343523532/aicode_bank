@@ -62,3 +62,20 @@ async def test_sentient_bank_lisp_config_endpoint() -> None:
         assert "SENTIENT MEGA-BANK & CRYPTO AGI SIMULATOR" in payload["config"]
         assert "(defpackage :sentient-bank-synonyms" in payload["config"]
         assert payload["test_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_groups_and_term_stats_endpoints() -> None:
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        groups = await ac.get("/matrix/api/groups")
+        assert groups.status_code == 200
+        groups_payload = groups.json()
+        assert groups_payload["summary"]["group_count"] >= 1
+        assert "stealth" in groups_payload["groups"]
+
+        stats = await ac.get("/matrix/api/term-stats", params={"q": "covert"})
+        assert stats.status_code == 200
+        stats_payload = stats.json()
+        assert stats_payload["query"] == "covert"
+        assert stats_payload["top_match"]["group"] == "stealth"
+        assert stats_payload["test_only"] is True
