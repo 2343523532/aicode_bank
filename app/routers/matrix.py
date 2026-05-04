@@ -154,6 +154,25 @@ def _flatten_terms() -> list[tuple[str, str]]:
     return [(group, term) for group, terms in SYNONYM_GROUPS.items() for term in terms]
 
 
+def _normalize_query(value: str) -> str:
+    return value.strip().lower()
+
+
+def _term_match_score(query: str, term: str) -> float:
+    return SequenceMatcher(None, _normalize_query(query), term.lower()).ratio()
+
+
+def _group_summary() -> dict[str, Any]:
+    all_terms = _flatten_terms()
+    term_lengths = [len(term) for _, term in all_terms]
+    return {
+        "group_count": len(SYNONYM_GROUPS),
+        "term_count": len(all_terms),
+        "largest_group": max(SYNONYM_GROUPS.items(), key=lambda row: len(row[1]))[0],
+        "average_term_length": round(sum(term_lengths) / len(term_lengths), 2),
+    }
+
+
 @router.get("", response_class=HTMLResponse)
 async def matrix_home() -> str:
     return """<!DOCTYPE html>
@@ -277,7 +296,7 @@ async def matrix_home() -> str:
 
 @router.get("/api/search")
 async def api_search(q: str) -> list[dict[str, Any]]:
-    q_norm = q.strip().lower()
+    q_norm = _normalize_query(q)
     return [
         {"group": group, "term": term, "score": 1.0}
         for group, term in _flatten_terms()
@@ -289,11 +308,38 @@ async def api_search(q: str) -> list[dict[str, Any]]:
 async def api_fuzzy(q: str, limit: int = 10, min_score: float = 0.3) -> list[dict[str, Any]]:
     rows = []
     for group, term in _flatten_terms():
-        score = SequenceMatcher(None, q.lower().strip(), term.lower()).ratio()
+        score = _term_match_score(q, term)
         if score >= min_score:
             rows.append({"group": group, "term": term, "score": round(score, 2)})
     rows.sort(key=lambda row: row["score"], reverse=True)
     return rows[:limit]
+
+
+
+
+@router.get("/api/groups")
+async def api_groups() -> dict[str, Any]:
+    return {
+        "groups": SYNONYM_GROUPS,
+        "summary": _group_summary(),
+        "test_only": True,
+    }
+
+
+@router.get("/api/term-stats")
+async def api_term_stats(q: str) -> dict[str, Any]:
+    normalized = _normalize_query(q)
+    matches = [
+        {"group": group, "term": term, "score": round(_term_match_score(normalized, term), 2)}
+        for group, term in _flatten_terms()
+    ]
+    matches.sort(key=lambda row: row["score"], reverse=True)
+    return {
+        "query": normalized,
+        "top_match": matches[0] if matches else None,
+        "group_summary": _group_summary(),
+        "test_only": True,
+    }
 
 
 @router.get("/api/scan")
