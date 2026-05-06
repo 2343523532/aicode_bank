@@ -12,7 +12,8 @@ PROVIDERS.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Dict
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,38 +33,10 @@ logger = logging.getLogger("sandbox")
 
 
 # ---------------------------------------------------------------------------
-# FastAPI application
+# Lifespan: create tables and seed demo customer
 # ---------------------------------------------------------------------------
-app = FastAPI(
-    title="Sandbox Stripe-like API (TEST_ONLY)",
-    version="1.0.0",
-    description=(
-        "Realistic sandbox for testing. ALL RESPONSES ARE TEST_ONLY and NOT REAL "
-        "MONEY."
-    ),
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(v1.router)
-app.include_router(matrix.router)
-
-# Keep compatibility for test modules that access main.async_engine directly.
-async_engine = database.get_async_engine()
-# Compatibility export for existing tests and integrations.
-SANDBOX_API_KEY = CONFIG_SANDBOX_API_KEY
-
-
-# ---------------------------------------------------------------------------
-# Startup: create tables and seed demo customer
-# ---------------------------------------------------------------------------
-@app.on_event("startup")
-async def on_startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Creating DB tables (if not exist)...")
     async with database.get_async_engine().begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
@@ -97,7 +70,36 @@ async def on_startup() -> None:
                 demo_id,
                 cents_to_str(balance_cents),
             )
+    yield
 
+
+# ---------------------------------------------------------------------------
+# FastAPI application
+# ---------------------------------------------------------------------------
+app = FastAPI(
+    title="Sandbox Stripe-like API (TEST_ONLY)",
+    version="1.1.0",
+    description=(
+        "Realistic sandbox for testing. ALL RESPONSES ARE TEST_ONLY and NOT REAL "
+        "MONEY."
+    ),
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(v1.router)
+app.include_router(matrix.router)
+
+# Keep compatibility for test modules that access main.async_engine directly.
+async_engine = database.get_async_engine()
+# Compatibility export for existing tests and integrations.
+SANDBOX_API_KEY = CONFIG_SANDBOX_API_KEY
 
 # ---------------------------------------------------------------------------
 # Health check

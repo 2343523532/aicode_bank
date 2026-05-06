@@ -4,13 +4,13 @@ A fully asynchronous FastAPI application that emulates a Stripe-style sandbox fo
 
 ## Features
 
-- Token, customer, balance, charge, and event endpoints with strict sandbox headers.
+- Token, customer, balance, charge, refund, event, and account summary endpoints with strict sandbox headers.
 - Persistent ledger that records every transaction event, including refunds.
 - Idempotency key storage to guarantee repeatable responses.
 - Optional webhook delivery with exponential backoff and HMAC signatures.
 - **Webhook Security**: Webhook signatures now include a timestamp to prevent replay attacks (`X-Signature-Timestamp`).
-- **Pagination**: Charge listing endpoints now support `limit` and `offset` query parameters.
-- New refund workflow with partial and full refunds plus charge summaries.
+- **Pagination**: Charge, refund, and ledger event listings support `limit`, `offset`, totals, and `has_more` metadata.
+- Refund workflow with partial and full refunds, refund listing, charge detail lookup, and account summaries.
 - SQLite-compatible JSON columns, making local testing fast and dependency-free.
 - Automated regression test that exercises the full charge/refund lifecycle.
 
@@ -47,9 +47,12 @@ pip install -r requirements.txt
 | `POST` | `/v1/customers` | Register a customer and provision a seeded ledger. |
 | `GET` | `/v1/accounts/{account_id}/balance` | Retrieve ledger balance details. |
 | `POST` | `/v1/charges` | Create a charge and reduce the customer's balance. |
-| `GET` | `/v1/customers/{customer_id}/charges` | List recent charges with refund totals. Supports `?limit=10&offset=0`. |
+| `GET` | `/v1/customers/{customer_id}/charges` | List charges with refund totals, status filtering, `limit`/`offset`, totals, and `has_more`. |
+| `GET` | `/v1/charges/{charge_id}` | Retrieve a single charge with metadata and refund totals. |
 | `POST` | `/v1/charges/{charge_id}/refunds` | Issue partial or full refunds with idempotency support. |
-| `GET` | `/v1/accounts/{account_id}/events` | Inspect chronological ledger events. |
+| `GET` | `/v1/charges/{charge_id}/refunds` | List refunds for a charge with pagination metadata. |
+| `GET` | `/v1/accounts/{account_id}/summary` | Retrieve charge count, refunded cents, net spend, balance, and event count. |
+| `GET` | `/v1/accounts/{account_id}/events` | Inspect chronological ledger events with optional `event_type`, `limit`, and `offset`. |
 | `GET` | `/health` | Lightweight liveness probe. |
 | `GET` | `/matrix/api/config/lisp` | Return DAN Omni Common Lisp infrastructure configuration. |
 | `GET` | `/matrix/api/config/sentient-bank-lisp` | Return the Sentient Mega-Bank & Crypto AGI Simulator Common Lisp script. |
@@ -73,6 +76,7 @@ pytest
 ## Next steps
 
 - Introduce API key management endpoints to rotate sandbox credentials programmatically.
+- Add a webhook event delivery audit table so tests can inspect retry attempts.
 
 
 ## Sentient Mega-Bank simulator payload
