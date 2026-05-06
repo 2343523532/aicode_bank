@@ -113,3 +113,111 @@ async def test_charge_and_refund_flow(client: httpx.AsyncClient, sandbox_app) ->
     event_types = [event["type"] for event in events.json()["events"]]
     assert event_types.count("charge") == 1
     assert event_types.count("refund") == 2
+
+
+@pytest.mark.asyncio
+async def test_charge_metadata_pagination_summary_and_refund_listing(
+    client: httpx.AsyncClient, sandbox_app
+) -> None:
+    headers: Dict[str, str] = {
+        "X-Test-Mode": "1",
+        "X-Api-Key": sandbox_app.SANDBOX_API_KEY,
+    }
+
+    create_customer = await client.post(
+        "/v1/customers",
+        json={"name": "Metadata User", "initial_balance_usd": "100.00"},
+        headers=headers,
+    )
+    assert create_customer.status_code == 200
+    customer_id = create_customer.json()["id"]
+
+    charge_ids = []
+    for index in range(3):
+        create_charge = await client.post(
+            "/v1/charges",
+            json={
+                "customer_id": customer_id,
+                "amount_cents": 1000 + index,
+                "currency": "usd",
+                "description": f"charge {index}",
+                "metadata": {"order_id": f"ord_{index}"},
+            },
+            headers=headers,
+        )
+        assert create_charge.status_code == 200
+        charge_ids.append(create_charge.json()["id"])
+
+    paged = await client.get(
+        f"/v1/customers/{customer_id}/charges",
+        params={"limit": 2, "offset": 0},
+        headers=headers,
+    )
+    assert paged.status_code == 200
+    page_payload = paged.json()
+    assert page_payload["count"] == 2
+    assert page_payload["total_count"] == 3
+    assert page_payload["has_more"] is True
+    assert page_payload["limit"] == 2
+
+    charge_detail = await client.get(f"/v1/charges/{charge_ids[-1]}", headers=headers)
+    assert charge_detail.status_code == 200
+    detail_payload = charge_detail.json()
+    assert detail_payload["currency"] == "USD"
+    assert detail_payload["metadata"]["order_id"] == "ord_2"
+    assert detail_payload["created_at"] is not None
+
+    refund = await client.post(
+        f"/v1/charges/{charge_ids[-1]}/refunds",
+        json={"amount_cents": 400, "reason": "requested", "metadata": {"ticket": "T-1"}},
+        headers=headers,
+    )
+    assert refund.status_code == 200
+    refund_payload = refund.json()
+    assert refund_payload["metadata"]["ticket"] == "T-1"
+    assert refund_payload["reason"] == "requested"
+
+    refunds = await client.get(f"/v1/charges/{charge_ids[-1]}/refunds", headers=headers)
+    assert refunds.status_code == 200
+    refunds_payload = refunds.json()
+    assert refunds_payload["count"] == 1
+    assert refunds_payload["total_count"] == 1
+    assert refunds_payload["refunds"][0]["id"] == refund_payload["id"]
+
+    summary = await client.get(f"/v1/accounts/{customer_id}/summary", headers=headers)
+    assert summary.status_code == 200
+    summary_payload = summary.json()
+    assert summary_payload["charges_count"] == 3
+    assert summary_payload["refunded_cents"] == 400
+    assert summary_payload["net_spend_cents"] == 2603
+
+    filtered_events = await client.get(
+        f"/v1/accounts/{customer_id}/events",
+        params={"event_type": "refund"},
+        headers=headers,
+    )
+    assert filtered_events.status_code == 200
+    assert filtered_events.json()["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_amount_validation_rejects_non_positive_charge(
+    client: httpx.AsyncClient, sandbox_app
+) -> None:
+    headers: Dict[str, str] = {
+        "X-Test-Mode": "1",
+        "X-Api-Key": sandbox_app.SANDBOX_API_KEY,
+    }
+    create_customer = await client.post(
+        "/v1/customers",
+        json={"name": "Validation User", "initial_balance_usd": "10.00"},
+        headers=headers,
+    )
+    assert create_customer.status_code == 200
+
+    invalid_charge = await client.post(
+        "/v1/charges",
+        json={"customer_id": create_customer.json()["id"], "amount_cents": 0},
+        headers=headers,
+    )
+    assert invalid_charge.status_code == 422
